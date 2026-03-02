@@ -268,7 +268,7 @@ with st.sidebar:
     st.markdown("---")
     st.markdown(
         "<div style='text-align:center;color:#58606a;font-size:0.75rem;'>"
-        "Built by <b>Vismay</b> · 2024<br>"
+        "Built by <b>Vismay</b> · 2025<br>"
         "Powered by vectorbt + Plotly"
         "</div>",
         unsafe_allow_html=True,
