@@ -17,8 +17,8 @@ A **Streamlit web app** that lets you describe trading strategies in **plain Eng
 
 | Level | What It Does |
 |-------|-------------|
-| **🤖 Level 1 — AI Interpreter** | Understands your natural language strategy (even vague ones like *"buy when the stock looks oversold"*) and generates executable Python/vectorbt backtest code |
-| **🧪 Level 2 — AI Analyst** | After the backtest runs, analyzes the results and writes a professional research note with risk analysis, market context, and improvement suggestions |
+| **🤖 AI Interpreter** | Understands your natural language strategy (even vague ones like *"buy when the stock looks oversold"*) and generates executable Python/vectorbt backtest code |
+| **🧪 AI Analyst** | After the backtest runs, analyzes the results and writes a professional research note with risk analysis, market context, and improvement suggestions |
 
 ### Dual Mode
 - **AI Mode** (default) — AI interprets any strategy, no matter how complex or ambiguous
