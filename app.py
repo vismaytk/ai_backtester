@@ -23,6 +23,11 @@ from parser import parse_strategy, IndicatorType
 from code_generator import generate_backtest_code
 from backtester import run_backtest, BacktestError
 
+# AI modules (Level 1 + Level 2)
+from ai_client import init_ai, AIError
+from ai_interpreter import generate_strategy_code, retry_with_error
+from ai_analyst import generate_research_note
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # PAGE CONFIG & STYLING
@@ -269,7 +274,7 @@ with st.sidebar:
     st.markdown(
         "<div style='text-align:center;color:#58606a;font-size:0.75rem;'>"
         "Built by <b>Vismay</b> · 2025<br>"
-        "Powered by vectorbt + Plotly"
+        "Powered by AI + vectorbt + Plotly"
         "</div>",
         unsafe_allow_html=True,
     )
@@ -309,61 +314,113 @@ with col_btn:
 # ══════════════════════════════════════════════════════════════════════════════
 
 if run_clicked and strategy_text.strip():
-    # Step 1: Parse
-    with st.spinner("🧠 Parsing your strategy..."):
-        parsed = parse_strategy(strategy_text)
+    code = None
+    using_ai = True
 
-    if not parsed.is_valid:
-        st.error(
-            "❌ **Could not parse your strategy.** Please try rephrasing.\n\n"
-            "**Supported patterns:**\n"
-            "- `Buy when SMA 50 crosses above SMA 200`\n"
-            "- `Sell when RSI goes above 70`\n"
-            "- `Buy when price crosses above upper Bollinger Band`\n"
-            "- `Buy when MACD line crosses above MACD signal`"
-        )
+    # ── AI MODE: AI generates code directly ─────────────────────────────
+    try:
+        init_ai()
+
+        with st.spinner("🤖 AI is interpreting your strategy..."):
+            code = generate_strategy_code(
+                strategy=strategy_text,
+                ticker=ticker,
+                start_date=str(start_date),
+                end_date=str(end_date),
+                init_cash=init_cash,
+                fees=fees_decimal,
+            )
+
+        with col_status:
+            st.markdown(
+                '<div class="parse-box">'
+                '🤖 <span class="metric-good">AI interpreted your strategy</span>'
+                '<br>Code generated — executing backtest...'
+                '</div>',
+                unsafe_allow_html=True,
+            )
+
+    except AIError as e:
+        st.error(f"❌ **AI Error:** {str(e)}")
+        st.info("💡 Falling back to rule-based parser...")
+        using_ai = False  # fall through to regex mode below
+
+    if not using_ai:
+        # ── RULE-BASED FALLBACK ─────────────────────────────────────────
+        with st.spinner("🧠 Parsing your strategy..."):
+            parsed = parse_strategy(strategy_text)
+
+        if not parsed.is_valid:
+            st.error(
+                "❌ **Could not parse your strategy.** Please try rephrasing.\n\n"
+                "**Supported patterns:**\n"
+                "- `Buy when SMA 50 crosses above SMA 200`\n"
+                "- `Sell when RSI goes above 70`\n"
+                "- `Buy when price crosses above upper Bollinger Band`\n"
+                "- `Buy when MACD line crosses above MACD signal`"
+            )
+            if parsed.warnings:
+                for w in parsed.warnings:
+                    st.warning(f"⚠️ {w}")
+            st.stop()
+
+        with col_status:
+            confidence_color = "metric-good" if parsed.parse_confidence >= 0.8 else "metric-neutral"
+            st.markdown(
+                f'<div class="parse-box">'
+                f'📐 Parsed (rule-based) · Confidence: <span class="{confidence_color}">'
+                f'{parsed.parse_confidence:.0%}</span>'
+                f'<br>{parsed.summary().replace(chr(10), "<br>")}</div>',
+                unsafe_allow_html=True,
+            )
+
         if parsed.warnings:
             for w in parsed.warnings:
-                st.warning(f"⚠️ {w}")
-        st.stop()
+                st.info(f"ℹ️ {w}")
 
-    # Show parsed result
-    with col_status:
-        confidence_color = "metric-good" if parsed.parse_confidence >= 0.8 else "metric-neutral"
-        st.markdown(
-            f'<div class="parse-box">'
-            f'✅ Parsed successfully · Confidence: <span class="{confidence_color}">'
-            f'{parsed.parse_confidence:.0%}</span>'
-            f'<br>{parsed.summary().replace(chr(10), "<br>")}</div>',
-            unsafe_allow_html=True,
-        )
+        with st.spinner("⚙️ Generating backtest code..."):
+            code = generate_backtest_code(
+                parsed,
+                ticker=ticker,
+                start_date=str(start_date),
+                end_date=str(end_date),
+                init_cash=init_cash,
+                fees=fees_decimal,
+            )
 
-    if parsed.warnings:
-        for w in parsed.warnings:
-            st.info(f"ℹ️ {w}")
-
-    # Step 2: Generate Code
-    with st.spinner("⚙️ Generating backtest code..."):
-        code = generate_backtest_code(
-            parsed,
-            ticker=ticker,
-            start_date=str(start_date),
-            end_date=str(end_date),
-            init_cash=init_cash,
-            fees=fees_decimal,
-        )
-
-    # Step 3: Execute Backtest
+    # ── Execute Backtest (shared by both modes) ─────────────────────────
     with st.spinner("🚀 Running backtest..."):
         try:
             results = run_backtest(code)
-        except BacktestError as e:
-            st.error(f"❌ **Backtest failed:**\n\n```\n{str(e)}\n```")
-            st.code(code, language="python")
-            st.stop()
-        except Exception as e:
-            st.error(f"❌ **Unexpected error:** {str(e)}")
-            st.stop()
+        except (BacktestError, Exception) as first_error:
+            # If AI mode, auto-retry with error feedback
+            if using_ai:
+                with st.spinner("🔄 Code had an issue — AI is fixing it..."):
+                    try:
+                        code = retry_with_error(
+                            strategy=strategy_text,
+                            previous_code=code,
+                            error_message=str(first_error),
+                            ticker=ticker,
+                            start_date=str(start_date),
+                            end_date=str(end_date),
+                            init_cash=init_cash,
+                            fees=fees_decimal,
+                        )
+                        results = run_backtest(code)
+                        st.success("✅ AI fixed the code on retry!")
+                    except Exception as retry_error:
+                        st.error(
+                            f"❌ **Backtest failed after retry:**\n\n"
+                            f"**Original error:** {str(first_error)}\n\n"
+                            f"**Retry error:** {str(retry_error)}"
+                        )
+                        st.code(code, language="python")
+                        st.stop()
+            else:
+                st.error(f"❌ **Backtest failed:**\n\n```\n{str(first_error)}\n```")
+                st.code(code, language="python")
+                st.stop()
 
     # ══════════════════════════════════════════════════════════════════════════
     # RESULTS DASHBOARD
@@ -421,7 +478,14 @@ if run_clicked and strategy_text.strip():
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ── Tabbed Results ────────────────────────────────────────────────────────
-    tab_chart, tab_trades, tab_code = st.tabs(["📈 Interactive Chart", "📝 Trade Log", "💻 Generated Code"])
+    if using_ai:
+        tab_chart, tab_trades, tab_code, tab_research = st.tabs(
+            ["📈 Interactive Chart", "📝 Trade Log", "💻 Generated Code", "🧪 AI Research Note"]
+        )
+    else:
+        tab_chart, tab_trades, tab_code = st.tabs(
+            ["📈 Interactive Chart", "📝 Trade Log", "💻 Generated Code"]
+        )
 
     with tab_chart:
         # Build the chart
@@ -557,11 +621,37 @@ if run_clicked and strategy_text.strip():
             st.info("No trades were executed with this strategy.")
 
     with tab_code:
+        mode_label = "🤖 AI" if using_ai else "📐 Rule-based parser"
         st.markdown(
-            "💡 *This is the actual Python code generated from your natural language input. "
-            "You can copy and run it independently.*"
+            f"💡 *This code was generated by **{mode_label}** from your natural language input. "
+            f"You can copy and run it independently.*"
         )
         st.code(code, language="python", line_numbers=True)
+
+    # ── AI Research Note Tab (Level 2) ────────────────────────────────────
+    if using_ai:
+        with tab_research:
+            st.markdown(
+                '<div style="background:rgba(74,14,143,0.12);border:1px solid rgba(139,139,255,0.2);'
+                'border-radius:10px;padding:0.8rem 1.2rem;margin-bottom:1rem;font-size:0.85rem;color:#c9b1ff;">'
+                '🧠 <b>AI is analyzing your backtest results...</b> This may take a few seconds.'
+                '</div>',
+                unsafe_allow_html=True,
+            )
+            try:
+                with st.spinner("🧠 AI is writing a research note..."):
+                    research_note = generate_research_note(
+                        strategy_description=strategy_text,
+                        results=results,
+                        ticker=ticker,
+                        start_date=str(start_date),
+                        end_date=str(end_date),
+                    )
+                st.markdown(research_note)
+            except AIError as e:
+                st.warning(f"⚠️ Could not generate research note: {str(e)}")
+            except Exception as e:
+                st.warning(f"⚠️ Research note generation failed: {str(e)}")
 
 
 elif run_clicked:
