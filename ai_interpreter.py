@@ -12,8 +12,9 @@
 ═══════════════════════════════════════════════════════════════════════════════
 """
 
-from ai_client import call_ai, AIError
+from ai_client import call_ai, AIError, AILogicError
 import re
+import json
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -62,13 +63,39 @@ CRITICAL RULES:
   (e.g., "SMA(50)": sma_50, "RSI(14)": rsi_14) so they can be plotted
 - Use .squeeze() on downloaded data columns to get 1D Series
 - Use .fillna(False) on entry/exit signals
+- EXPLICIT SIZING: Pass `size=1.0` to Portfolio.from_signals() to ensure 100% equity sizing.
+- SHIFT SIGNALS: To prevent lookahead bias, entry orders must execute on the next day's open or close. We'll simulate this by shifting signals: `entries = entries.shift(1).fillna(False)` and `exits = exits.shift(1).fillna(False)`.
 - Pass entries.values and exits.values (numpy arrays) to Portfolio.from_signals()
 
 RESPONSE FORMAT:
-- Return ONLY pure Python code
-- Do NOT wrap the code in markdown code fences (no ``` markers)
-- Do NOT include any explanation text before or after the code
-- The response must start with 'import' and be valid Python"""
+You MUST output your response in TWO parts:
+Part 1: A JSON Intermediate Representation (IR) wrapped in ```json tags.
+Part 2: The executable Python code wrapped in ```python tags.
+
+If the strategy is contradictory, ambiguous, or nonsensical, set status to "error" and explain why in "message". Do not output code in this case.
+
+Example Output (Success):
+```json
+{
+  "status": "success",
+  "indicators": ["SMA 50", "SMA 200"],
+  "entry_logic": "SMA 50 > SMA 200",
+  "exit_logic": "SMA 50 < SMA 200",
+  "warnings": []
+}
+```
+```python
+import yfinance as yf...
+```
+
+Example Output (Error):
+```json
+{
+  "status": "error",
+  "message": "The strategy says to buy and sell when RSI > 70, which is contradictory."
+}
+```
+"""
 
 
 def _build_user_prompt(
@@ -92,30 +119,43 @@ USE THESE EXACT PARAMETERS:
 - Transaction fees: {fees}
 - Frequency: "1D"
 
-Remember: return ONLY executable Python code, no markdown, no explanation."""
+Remember: You MUST output the ```json block first, then the ```python block. If the strategy is invalid, output only the JSON with status="error"."""
 
 
-def _clean_code(raw: str) -> str:
+def _parse_ai_response(raw: str) -> tuple[dict, str]:
     """
-    Strip markdown fences or any non-code wrapper from the AI response.
+    Extract the JSON IR and Python code from the AI's response.
+    Returns (ir_dict, python_code).
     """
-    code = raw.strip()
-
-    # Remove ```python ... ``` wrappers
-    code = re.sub(r'^```(?:python)?\s*\n', '', code)
-    code = re.sub(r'\n```\s*$', '', code)
-
-    # Remove any leading explanation lines (non-import, non-comment, non-blank)
-    lines = code.split('\n')
-    start_idx = 0
-    for i, line in enumerate(lines):
-        stripped = line.strip()
-        if stripped.startswith('import ') or stripped.startswith('from ') or stripped == '' or stripped.startswith('#'):
-            start_idx = i
-            break
-
-    code = '\n'.join(lines[start_idx:])
-    return code.strip()
+    ir_data = {"status": "error", "message": "Failed to parse AI response."}
+    code = ""
+    
+    # Try finding JSON block
+    json_match = re.search(r'```json\s*(.*?)\s*```', raw, re.DOTALL | re.IGNORECASE)
+    if json_match:
+        try:
+            ir_data = json.loads(json_match.group(1).strip())
+        except json.JSONDecodeError:
+            ir_data["message"] = "AI returned invalid JSON."
+    
+    # Try finding Python code block
+    py_match = re.search(r'```python\s*(.*?)\s*```', raw, re.DOTALL | re.IGNORECASE)
+    if py_match:
+        code = py_match.group(1).strip()
+    else:
+        # Fallback if AI didn't use markdown fences for code
+        # Remove JSON block and assume the rest is code if it starts with import
+        rest = re.sub(r'```json\s*.*?\s*```', '', raw, flags=re.DOTALL | re.IGNORECASE).strip()
+        lines = rest.split('\n')
+        start_idx = -1
+        for i, line in enumerate(lines):
+            if line.strip().startswith('import '):
+                start_idx = i
+                break
+        if start_idx != -1:
+            code = '\n'.join(lines[start_idx:]).strip()
+            
+    return ir_data, code
 
 
 def _validate_code_safety(code: str) -> list:
@@ -152,7 +192,7 @@ def generate_strategy_code(
     init_cash: int = 1_000_000,
     fees: float = 0.001,
     max_retries: int = 1,
-) -> str:
+) -> tuple[dict, str]:
     """
     Use AI to interpret a natural language strategy and generate
     executable Python backtest code.
@@ -167,9 +207,10 @@ def generate_strategy_code(
         max_retries: Number of retries if code fails validation
 
     Returns:
-        Clean, executable Python code string
+        tuple containing (ir_dict, executable Python code string)
 
     Raises:
+        AILogicError: If the user's strategy is contradictory/invalid.
         AIError: If AI API fails or code is unsafe
     """
     user_prompt = _build_user_prompt(
@@ -184,7 +225,13 @@ def generate_strategy_code(
         max_output_tokens=4096,
     )
 
-    code = _clean_code(raw_response)
+    ir_dict, code = _parse_ai_response(raw_response)
+    
+    if ir_dict.get("status") == "error":
+        raise AILogicError(ir_dict.get("message", "The AI rejected the strategy logic."))
+    
+    if not code:
+        raise AIError("AI did not return any Python code.")
 
     # Safety check
     safety_issues = _validate_code_safety(code)
@@ -205,7 +252,13 @@ def generate_strategy_code(
                 temperature=0.1,
                 max_output_tokens=4096,
             )
-            code = _clean_code(raw_response)
+            ir_dict, code = _parse_ai_response(raw_response)
+            
+            if ir_dict.get("status") == "error":
+                raise AILogicError(ir_dict.get("message", "The AI rejected the strategy logic."))
+            
+            if not code:
+                raise AIError("AI did not return any Python code on retry.")
 
             # Re-check
             safety_issues = _validate_code_safety(code)
@@ -219,7 +272,7 @@ def generate_strategy_code(
                 f"AI generated unsafe code. Issues: {', '.join(safety_issues)}"
             )
 
-    return code
+    return ir_dict, code
 
 
 def retry_with_error(
@@ -237,7 +290,7 @@ def retry_with_error(
     for a corrected version.
 
     Returns:
-        Fixed Python code string
+        tuple containing (ir_dict, Fixed Python code string)
 
     Raises:
         AIError: If retry also fails
@@ -257,7 +310,7 @@ Common fixes:
 - Pass .values (numpy arrays) to vectorbt.Portfolio.from_signals()
 - Make sure the `results` dict has ALL required keys
 
-Return ONLY the fixed Python code, no explanation."""
+Return ONLY the ````json```` block with the IR, followed by the ````python```` block with the fixed code."""
 
     raw = call_ai(
         prompt=retry_prompt,
@@ -266,7 +319,10 @@ Return ONLY the fixed Python code, no explanation."""
         max_output_tokens=4096,
     )
 
-    code = _clean_code(raw)
+    ir_dict, code = _parse_ai_response(raw)
+    
+    if not code:
+        raise AIError("AI did not return any Python code on execution retry.")
 
     safety_issues = _validate_code_safety(code)
     if safety_issues:
@@ -274,4 +330,4 @@ Return ONLY the fixed Python code, no explanation."""
             f"Retry code has safety issues: {', '.join(safety_issues)}"
         )
 
-    return code
+    return ir_dict, code

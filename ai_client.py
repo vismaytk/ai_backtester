@@ -107,3 +107,7 @@ def call_ai(
 class AIError(Exception):
     """Raised when an AI API call fails."""
     pass
+
+class AILogicError(Exception):
+    """Raised when the AI detects contradictory or invalid trading logic."""
+    pass

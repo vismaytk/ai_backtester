@@ -363,6 +363,17 @@ def parse_strategy(user_input: str) -> ParsedStrategy:
             exit_rules.append(Rule(left=rule.left, condition=exit_cond, right=rule.right))
             warnings.append(f"Auto-generated exit rule (inverse of entry): {exit_rules[-1]}")
 
+    # Logical Validation: Check for identical rules in entry and exit
+    if entry_rules and exit_rules:
+        # If the exact same event triggers both buy and sell, it's contradictory
+        for er in entry_rules:
+            for ex in exit_rules:
+                if er.left == ex.left and er.condition == ex.condition and er.right == ex.right:
+                    warnings.append(f"Logic Error: Contradictory strategy! '{er}' triggers both entry and exit.")
+                    entry_rules.clear()
+                    exit_rules.clear()
+                    break
+
     # Calculate confidence
     confidence = 0.0
     if entry_rules:

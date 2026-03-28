@@ -24,7 +24,7 @@ from code_generator import generate_backtest_code
 from backtester import run_backtest, BacktestError
 
 # AI modules (Level 1 + Level 2)
-from ai_client import init_ai, AIError
+from ai_client import init_ai, AIError, AILogicError
 from ai_interpreter import generate_strategy_code, retry_with_error
 from ai_analyst import generate_research_note
 
@@ -322,7 +322,7 @@ if run_clicked and strategy_text.strip():
         init_ai()
 
         with st.spinner("🤖 AI is interpreting your strategy..."):
-            code = generate_strategy_code(
+            ir_dict, code = generate_strategy_code(
                 strategy=strategy_text,
                 ticker=ticker,
                 start_date=str(start_date),
@@ -332,14 +332,19 @@ if run_clicked and strategy_text.strip():
             )
 
         with col_status:
+            ir_summary = "<br>".join([f"• <b>{k}</b>: {v}" for k, v in ir_dict.items() if k != "status"])
             st.markdown(
-                '<div class="parse-box">'
-                '🤖 <span class="metric-good">AI interpreted your strategy</span>'
-                '<br>Code generated — executing backtest...'
-                '</div>',
+                f'<div class="parse-box">'
+                f'🤖 <span class="metric-good">AI interpreted your strategy</span>'
+                f'<hr style="border-color:rgba(139,139,255,0.2);margin:0.5rem 0;">'
+                f'<div style="color:#c9d1d9;">{ir_summary}</div>'
+                f'</div>',
                 unsafe_allow_html=True,
             )
 
+    except AILogicError as logic_err:
+        st.error(f"❌ **Logic Error:** {str(logic_err)}")
+        st.stop()
     except AIError as e:
         st.error(f"❌ **AI Error:** {str(e)}")
         st.info("💡 Falling back to rule-based parser...")
@@ -397,7 +402,7 @@ if run_clicked and strategy_text.strip():
             if using_ai:
                 with st.spinner("🔄 Code had an issue — AI is fixing it..."):
                     try:
-                        code = retry_with_error(
+                        ir_dict, code = retry_with_error(
                             strategy=strategy_text,
                             previous_code=code,
                             error_message=str(first_error),

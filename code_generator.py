@@ -233,8 +233,8 @@ close = data["Close"].squeeze()
 # ═══════════════════════════════════════════════════════════════════
 # SIGNAL GENERATION
 # ═══════════════════════════════════════════════════════════════════
-entries = ({entry_expr}).fillna(False)
-exits = ({exit_expr}).fillna(False)
+entries = ({entry_expr}).shift(1).fillna(False)
+exits = ({exit_expr}).shift(1).fillna(False)
 
 buy_signals = close[entries]
 sell_signals = close[exits]
@@ -247,6 +247,7 @@ portfolio = vbt.Portfolio.from_signals(
     entries=entries.values,
     exits=exits.values,
     init_cash={init_cash},
+    size=1.0,  # 100% of available equity per trade
     fees={fees},
     freq="1D",
 )
@@ -257,12 +258,20 @@ portfolio = vbt.Portfolio.from_signals(
 total_return = portfolio.total_return()
 sharpe_ratio = portfolio.sharpe_ratio()
 max_drawdown = portfolio.max_drawdown()
-win_rate = portfolio.trades.win_rate()
+# Safe handling of trade metrics in case of 0 trades
 total_trades = portfolio.trades.count()
-profit_factor = portfolio.trades.profit_factor()
+
+if total_trades > 0:
+    win_rate = portfolio.trades.win_rate()
+    profit_factor = portfolio.trades.profit_factor()
+    trades_readable = portfolio.trades.records_readable
+else:
+    win_rate = 0.0
+    profit_factor = 0.0
+    trades_readable = pd.DataFrame()
+
 final_value = portfolio.final_value()
 equity = portfolio.value()
-trades_readable = portfolio.trades.records_readable
 
 # Buy & Hold Benchmark
 bh_portfolio = vbt.Portfolio.from_holding(close, init_cash={init_cash}, freq="1D")
