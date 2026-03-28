@@ -35,6 +35,7 @@ Buy when stock looks oversold and volume is spiking, sell when RSI goes above 70
 - 📝 Detailed trade log with entry/exit prices
 - 💻 Auto-generated Python backtest code you can copy & learn from
 - 🧪 AI-written research note analyzing your strategy's performance
+- 🛡️ **Production-Ready & Safe:** Robust error handling, strict lookahead-bias prevention (`shift(1)` signals), and automated fuzz testing ensuring zero unhandled crashes.
 
 ---
 
@@ -78,6 +79,16 @@ python -m streamlit run app.py
 ```
 
 Then open **http://localhost:8501** in your browser.
+
+### 5. Run the Test Suite (Optional)
+This repository includes a robust test suite covering logic processing, edge cases, and randomized fuzz testing to guarantee execution stability.
+```bash
+# Run structural unit tests
+python -m pytest tests/
+
+# Run the stress fuzzer
+python tests/fuzz_test.py
+```
 
 ---
 
@@ -123,8 +134,8 @@ User Input                     "Buy when stock looks oversold"
     │
     ▼
 ┌──────────────────┐
-│  ai_interpreter  │           Natural language → AI → Python/vectorbt code
-│  (Level 1 — AI)  │           Handles ambiguous & complex strategies
+│  ai_interpreter  │           Natural language → AI → JSON IR → Python code
+│  (Level 1 — AI)  │           Handles ambiguous & complex strategies safely
 ├──────────────────┤
 │  parser.py       │           Fallback: regex-based NLP parser
 │  code_generator  │           Template-based code generation
@@ -156,6 +167,10 @@ ai-backtester/
 ├── parser.py               # Fallback NL strategy parser (rule-based)
 ├── code_generator.py       # Fallback vectorbt code generator
 ├── backtester.py           # Executes generated code safely
+├── tests/                  # Robustness testing suite
+│   ├── test_parser.py      # Unit tests for regex-based NLP rules
+│   ├── test_engine.py      # Execution validation (lookahead, determinism)
+│   └── fuzz_test.py        # Randomized string stress-tester (500+ iterations)
 ├── .env                    # API key (git-ignored, you create this)
 ├── requirements.txt        # Python dependencies
 ├── .gitignore

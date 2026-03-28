@@ -6,3 +6,4 @@ plotly
 streamlit
 google-generativeai
 python-dotenv
+pytest
